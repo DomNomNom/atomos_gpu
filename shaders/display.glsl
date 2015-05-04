@@ -9,9 +9,6 @@ uniform usampler2D connectionMap;
 
 out vec4 fragColor;
 
-const uint maxCapacity = 8u;
-const uint maxVolumes  = 128u;
-
 // if v is in the range -1..1
 // move it to 0..1
 vec4 to01(vec4 v) {
@@ -20,41 +17,35 @@ vec4 to01(vec4 v) {
 
 
 void main() {
-    ivec2 texSize = textureSize(positionMapTexture, 0);
+    ivec2 size_lastTick = textureSize(lastTick, 0);
+    uint maxCapacity = uint(size_lastTick.x);
+    uint maxVolumes  = uint(size_lastTick.y);
+
 
     ivec2 lookupPos = ivec2(
         to01(v).xy * (textureSize(positionMapTexture, 0)).y
+        // selfCoord
     );
     uint row = texelFetch(positionMapTexture, lookupPos, 0).r;
     uvec4 accum = uvec4(0u);
     for (uint slot=0u; slot<maxCapacity; ++slot) {
         accum += texelFetch(lastTick, ivec2(slot, row), 0);
     }
-    fragColor = vec4(accum) / maxCapacity;
-
-    ivec2 volumeSlot = ivec2(selfCoord);
-
-    // the raw state of lastTick
-    fragColor = vec4(texelFetch(lastTick, volumeSlot, 0)) / 255.0;
-
-    // the connection map
-    fragColor.rg = (
-        vec4(texelFetch(connectionMap, volumeSlot, 0)).xy
-        /
-        textureSize(connectionMap, 0)
-    );
-    fragColor.b = 0.0;
+    fragColor = vec4(accum) / float(maxCapacity) / 255.0;
 
 
-    // if (fragColor.r > 2.0) {
-    //     fragColor = vec4(1.0, 0.5, 0.0, 1.0);
-    // }
-    // fragColor.xyz = vec3(texture(positionMapTexture, lookupPos).rgb) / 255.0;
-    // // fragColor.xy = vec2() / vec2(maxCapacity*200000u, maxVolumes);
+    // // the raw state of lastTick
+    // ivec2 volumeSlot = ivec2(selfCoord);
+    // fragColor = vec4(texelFetch(lastTick, volumeSlot, 0)) / 255.0;
+
+    // // the connection map
+    // fragColor.rg = (
+    //     vec4(texelFetch(connectionMap, volumeSlot, 0)).xy
+    //     /
+    //     textureSize(connectionMap, 0)
+    // );
+    // fragColor.b = 0.0;
 
 
-    // fragColor.xyz = vec3(vec2(lookupPos)/20.0, 0.0);
-
-    // fragColor.xyz = vec3(to01(v).xy, 0.0);
     fragColor.a = 1.0;
 }

@@ -17,17 +17,18 @@ int window_wd = 300;
 int window_ht = 300;
 uint frameCount = 0;
 
+bool paused = false;
 
-const unsigned simulation_wd = 10;
-const unsigned simulation_ht = 10;
+const unsigned simulation_wd = 30;
+const unsigned simulation_ht = 30;
 
 Shader shader_tick;
 Shader shader_display;
 
 // GLubyte state[]
 
-const unsigned maxCapacity = 8;
-const unsigned maxVolumes = 128;
+const unsigned maxCapacity = 64;
+const unsigned maxVolumes = 1024;
 GLuint framebufferNames[2]; // The frame buffer objects
 GLuint renderTextures[2];   // The textures we're going to render to
 unsigned int renderSource = 0;
@@ -81,6 +82,8 @@ void keyHandler(unsigned char key, int, int) {
             cleanUp();
             exit(0);
             break; // lol
+        case ' ':
+            paused = !paused;
     }
 }
 
@@ -115,8 +118,9 @@ void drawRect() {
 // sets uniforms that are used in both shader_tick and shader_display
 void setSharedShaderUniforms(Shader &s) {
     glActiveTexture(GL_TEXTURE2);  glBindTexture(GL_TEXTURE_2D, connectionMapTexture);
-    glUniform1i( glGetUniformLocation(shader_display.id(), "connectionMap"), 2);
+    glUniform1i( glGetUniformLocation(s.id(), "connectionMap"), 2);
 
+    glUniform1f( glGetUniformLocation(s.id(), "time"), time_sinceInit());
     glUniform1i( glGetUniformLocation(s.id(), "lastTick"), 0);
     glUniform1ui(glGetUniformLocation(s.id(), "maxVolumes"),  maxVolumes);
     glUniform1ui(glGetUniformLocation(s.id(), "maxCapacity"), maxCapacity);
@@ -153,25 +157,28 @@ void tick() {
 
 
     // ====== do a tick() ======
-    // switch the buffers
-    renderTarget = 1 - renderTarget;
-    renderSource = 1 - renderSource;
+    if (!paused) {
 
-    shader_tick.bind();
-    glEnable(GL_TEXTURE_2D);
-    glBindFramebuffer(GL_FRAMEBUFFER, framebufferNames[renderTarget]);
-    glViewport(0, 0, maxCapacity, maxVolumes);
-    // glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glClearColor(0.9, 0.1, 0.1, 1.0);
-    glClearDepth(1000);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        // switch the buffers
+        renderTarget = 1 - renderTarget;
+        renderSource = 1 - renderSource;
 
-    // set shader data
-    glActiveTexture(GL_TEXTURE0);  glBindTexture(GL_TEXTURE_2D, renderTextures[renderSource]);
-    setSharedShaderUniforms(shader_tick);
-    glBindFragDataLocation(shader_tick.id(), 0, "fragColor");
-    drawRect();
-    shader_tick.unbind();
+        shader_tick.bind();
+        glEnable(GL_TEXTURE_2D);
+        glBindFramebuffer(GL_FRAMEBUFFER, framebufferNames[renderTarget]);
+        glViewport(0, 0, maxCapacity, maxVolumes);
+        // glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glClearColor(0.9, 0.1, 0.1, 1.0);
+        glClearDepth(1000);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // set shader data
+        glActiveTexture(GL_TEXTURE0);  glBindTexture(GL_TEXTURE_2D, renderTextures[renderSource]);
+        setSharedShaderUniforms(shader_tick);
+        glBindFragDataLocation(shader_tick.id(), 0, "fragColor");
+        drawRect();
+        shader_tick.unbind();
+    }
 
 
 
@@ -387,6 +394,7 @@ int main(int argc, char** argv) {
     glutKeyboardFunc(keyHandler);
     // glutMouseFunc(mouseHandler);
 
+    assert (maxVolumes > simulation_ht * simulation_ht);
     initPositionMap();
     initConnectionMap();
     initFrameBuffers();

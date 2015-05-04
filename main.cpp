@@ -4,6 +4,7 @@
 #include <GL/glut.h>
 #include <vector>
 #include <algorithm>  // min
+#include <cassert> // assert
 
 #include "time.hpp"
 #include "shader.h"
@@ -19,7 +20,6 @@ uint frameCount = 0;
 
 const unsigned simulation_wd = 10;
 const unsigned simulation_ht = 10;
-GLubyte pixelData[simulation_ht * simulation_wd * 4];
 
 Shader shader_tick;
 Shader shader_display;
@@ -28,7 +28,6 @@ Shader shader_display;
 
 const unsigned maxCapacity = 8;
 const unsigned maxVolumes = 128;
-// const unsigned numVolumes = simulation_wd * simulation_ht;
 GLuint framebufferNames[2]; // The frame buffer objects
 GLuint renderTextures[2];   // The textures we're going to render to
 unsigned int renderSource = 0;
@@ -37,9 +36,12 @@ unsigned int renderTarget = 1;
 // given a physical location (x<simulation_wd, y<simulation_ht)
 // gives a row index of the simulation
 GLuint positionMapTexture;
-GLubyte positionMap[simulation_wd * simulation_ht * 4];
+GLuint positionMap[simulation_wd * simulation_ht * 4];
 
-unsigned getVolumeDataRow(unsigned simX, unsigned simY) {
+GLuint connectionMapTexture;
+GLuint connectionMap[maxCapacity * maxVolumes * 4];
+
+unsigned getVolumeRow(unsigned simX, unsigned simY) {
     return positionMap[(simY*simulation_wd + simX) * 4];
 }
 
@@ -77,7 +79,7 @@ void keyHandler(unsigned char key, int, int) {
         case 27: // Escape -> exit
         case 'q':
             cleanUp();
-            exit (0);
+            exit(0);
             break; // lol
     }
 }
@@ -112,6 +114,9 @@ void drawRect() {
 
 // sets uniforms that are used in both shader_tick and shader_display
 void setSharedShaderUniforms(Shader &s) {
+    glActiveTexture(GL_TEXTURE2);  glBindTexture(GL_TEXTURE_2D, connectionMapTexture);
+    glUniform1i( glGetUniformLocation(shader_display.id(), "connectionMap"), 2);
+
     glUniform1i( glGetUniformLocation(s.id(), "lastTick"), 0);
     glUniform1ui(glGetUniformLocation(s.id(), "maxVolumes"),  maxVolumes);
     glUniform1ui(glGetUniformLocation(s.id(), "maxCapacity"), maxCapacity);
@@ -216,7 +221,91 @@ void tick() {
     }
 }
 
+// sets up a texture (without width or height)
+void createDataTexture(GLuint *holder) {
+    glEnable(GL_TEXTURE_2D);
+    glGenTextures(1, holder);
+    glBindTexture(GL_TEXTURE_2D, *holder);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
 
+void initPositionMap() {
+    for (unsigned i=0; i<simulation_wd * simulation_ht;  ++i) {
+        // we add 1 as row zero always contains void
+        positionMap[i*4 + 0] = i + 1;
+        positionMap[i*4 + 1] = 0;
+        positionMap[i*4 + 2] = 0;
+        positionMap[i*4 + 3] = 255;
+    }
+
+    createDataTexture(&positionMapTexture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32UI, simulation_wd, simulation_ht); // TODO: less channels
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, simulation_wd, simulation_ht, GL_RGBA_INTEGER, GL_UNSIGNED_INT, positionMap);
+    glDisable(GL_TEXTURE_2D);
+}
+
+
+// creates a connection between two volumes
+void addConnection(unsigned rowA, unsigned rowB) {
+    assert (0 < rowA && rowA < maxVolumes);
+    assert (0 < rowB && rowB < maxVolumes);
+
+    // search for available slots
+    // this linear search could be optimized out
+    unsigned slotA;
+    unsigned slotB;
+    for (slotA=0; slotA<maxCapacity && connectionMap[(rowA*maxCapacity + slotA)*4 + 1] != 0; ++slotA) {}
+    for (slotB=0; slotB<maxCapacity && connectionMap[(rowB*maxCapacity + slotB)*4 + 1] != 0; ++slotB) {}
+    assert (slotA < maxCapacity);
+    assert (slotB < maxCapacity);
+
+    // make A point to B
+    connectionMap[(rowA*maxCapacity + slotA)*4 + 0] = slotB;
+    connectionMap[(rowA*maxCapacity + slotA)*4 + 1] = rowB;
+
+    // make B point to A
+    connectionMap[(rowB*maxCapacity + slotB)*4 + 0] = slotA;
+    connectionMap[(rowB*maxCapacity + slotB)*4 + 1] = rowA;
+}
+
+void initConnectionMap() {
+    // Initialize with zeroes
+    // a zero means it points to itself
+    for (unsigned i=0; i<maxCapacity * maxVolumes;  ++i) {
+        connectionMap[i*4 + 0] = 0;  // target slot (x)
+        connectionMap[i*4 + 1] = 0;  // target row (y)
+        connectionMap[i*4 + 2] = 0;
+        connectionMap[i*4 + 3] = 0;
+    }
+
+    // add connections
+    for (unsigned y=0; y<simulation_ht; ++y) {
+        for (unsigned x=0; x<simulation_wd; ++x) {
+            if (x != 0) {
+                addConnection(
+                    getVolumeRow(x,   y),
+                    getVolumeRow(x-1, y)
+                );
+            }
+            if (y != 0) {
+                addConnection(
+                    getVolumeRow(x, y),
+                    getVolumeRow(x, y-1)
+                );
+            }
+        }
+    }
+
+    // create the texture from this data
+    createDataTexture(&connectionMapTexture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32UI, maxCapacity, maxVolumes);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, maxCapacity, maxVolumes, GL_RGBA_INTEGER, GL_UNSIGNED_INT, connectionMap);
+    glDisable(GL_TEXTURE_2D);
+
+}
 
 void initFrameBuffers() {
     // create the base volumeData to initialize the renderTextures
@@ -250,7 +339,7 @@ void initFrameBuffers() {
                 y <= simulation_ht * 0.5
             ) ? 255 : 0;
 
-            unsigned row = getVolumeDataRow(x, y);
+            unsigned row = getVolumeRow(x, y);
             for (unsigned col=0; col<maxCapacity; ++col) {
                 unsigned pixelIndex = (row * maxCapacity + col) * 4;
                 volumeData[pixelIndex + 0] = 0;
@@ -268,17 +357,9 @@ void initFrameBuffers() {
     // create and initialize the renderTextures and framebuffers
     for (unsigned i=0; i<2; ++i) {
         // create the underlying texture
-        glEnable(GL_TEXTURE_2D);
-        glGenTextures(1, &renderTextures[i]);
-        glBindTexture(GL_TEXTURE_2D, renderTextures[i]);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        // glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, maxCapacity, maxVolumes, 0, GL_RGBA, GL_UNSIGNED_BYTE, volumeData);
+        createDataTexture(&renderTextures[i]);
         glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8UI, maxCapacity, maxVolumes);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, maxCapacity, maxVolumes, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, volumeData);
-        // glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8UI, 8, 128);
         glDisable(GL_TEXTURE_2D);
 
         // create the framebuffer and attach the texture to it
@@ -291,36 +372,10 @@ void initFrameBuffers() {
     }
 }
 
-void initPositionMapTexture() {
-    for (unsigned i=0; i<simulation_wd * simulation_ht;  ++i) {
-        // we add 1 as row zero always contains void
-        positionMap[i*4 + 0] = i + 1;
-        positionMap[i*4 + 1] = 0;
-        positionMap[i*4 + 2] = 0;
-        positionMap[i*4 + 3] = 255;
-    }
-
-    glEnable(GL_TEXTURE_2D);
-    glGenTextures(1, &positionMapTexture);
-    glBindTexture(GL_TEXTURE_2D, positionMapTexture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8UI, simulation_wd, simulation_ht);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, simulation_wd, simulation_ht, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, positionMap);
-    glDisable(GL_TEXTURE_2D);
-
-}
-
 int main(int argc, char** argv) {
     printf("hello world\n");
 
     time_init();
-
-    for (unsigned i=0; i<simulation_wd*simulation_ht*4; ++i) {
-        pixelData[i] = 128;
-    }
 
     // set up the window
     glutInit(&argc, argv);
@@ -332,7 +387,8 @@ int main(int argc, char** argv) {
     glutKeyboardFunc(keyHandler);
     // glutMouseFunc(mouseHandler);
 
-    initPositionMapTexture();
+    initPositionMap();
+    initConnectionMap();
     initFrameBuffers();
 
 

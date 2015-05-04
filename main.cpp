@@ -19,16 +19,16 @@ uint frameCount = 0;
 
 bool paused = false;
 
-const unsigned simulation_wd = 30;
-const unsigned simulation_ht = 30;
+const unsigned simulation_wd = 50;
+const unsigned simulation_ht = 50;
 
 Shader shader_tick;
 Shader shader_display;
 
 // GLubyte state[]
 
-const unsigned maxCapacity = 64;
-const unsigned maxVolumes = 1024;
+const unsigned maxCapacity = 128;
+const unsigned maxVolumes = 4096;
 GLuint framebufferNames[2]; // The frame buffer objects
 GLuint renderTextures[2];   // The textures we're going to render to
 unsigned int renderSource = 0;
@@ -302,6 +302,34 @@ void initConnectionMap() {
                     getVolumeRow(x, y),
                     getVolumeRow(x, y-1)
                 );
+            }
+        }
+    }
+
+    // repeat connections so we need less ticks
+    // find the minimum width that is ok to repeat
+    unsigned repeatWidth = 0;
+    for (unsigned vol=0; vol<maxVolumes; ++vol) {
+        for (unsigned slot=0; slot<maxCapacity; ++slot) {
+            if (connectionMap[(vol*maxCapacity + slot)*4 + 1] != 0) {
+                repeatWidth = std::max(repeatWidth, slot);
+            }
+        }
+    }
+    repeatWidth += 1; // width rather than last non-zero index
+    // printf("repeat: %d\n", repeatWidth);
+
+    // trigger warning: long lines
+    // copy/move connections in blocks of repeatWidth horizontally
+    for (unsigned vol=0; vol<maxVolumes; ++vol) {
+        for (unsigned slotShift=repeatWidth; slotShift+repeatWidth-1<maxCapacity; slotShift+=repeatWidth) {
+            // printf("repeating: %d\n", slotShift);
+            for (unsigned slot=0; slot<repeatWidth; ++slot) {
+                int originPixel = (vol*maxCapacity + slot)*4;
+                connectionMap[originPixel + slotShift*4 + 0] =  connectionMap[originPixel + 0] + slotShift;
+                connectionMap[originPixel + slotShift*4 + 1] =  connectionMap[originPixel + 1];
+                connectionMap[originPixel + slotShift*4 + 2] =  connectionMap[originPixel + 2];
+                connectionMap[originPixel + slotShift*4 + 3] =  connectionMap[originPixel + 3];
             }
         }
     }

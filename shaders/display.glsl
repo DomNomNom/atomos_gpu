@@ -34,13 +34,12 @@ void main() {
     fragColor = vec4(accum) / float(maxCapacity) / 255.0;
 
 
-    // // the raw state of lastTick
-    // ivec2 volumeSlot = ivec2(selfCoord);
-    // fragColor = vec4(texelFetch(lastTick, volumeSlot, 0)) / 255.0;
+    // the raw state of lastTick
+    // fragColor = vec4(texelFetch(lastTick, ivec2(selfCoord), 0)) / 255.0;
 
     // // the connection map
     // fragColor.rg = (
-    //     vec4(texelFetch(connectionMap, volumeSlot, 0)).xy
+    //     vec4(texelFetch(connectionMap, ivec2(selfCoord), 0)).xy
     //     /
     //     textureSize(connectionMap, 0)
     // );
